@@ -1,4 +1,4 @@
-# PASTE2
+# MOSAICFlow
 
 ![MOSAICFlow](overview.png)
 
