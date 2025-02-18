@@ -86,7 +86,7 @@ def physical_align(slice1, slice2, max_iter, alpha):
     param: max_iter - Maximum number of iterations to run the global invariant optimal transport algorithm
     param: alpha - Alignment tuning parameter. Note: 0 ≤ alpha ≤ 1
 
-    return: slice1, slice2 - The AnnDAta object of physically aligned slice 1 and slice 2. The spatial coordinates of slice 1 are affined transformed on to slice 2, so
+    return: slice1, slice2 - The AnnData object of physically aligned slice 1 and slice 2. The spatial coordinates of slice 1 are affined transformed on to slice 2, so
     slice1.obsm['spatial] is updated, while slice2 is just a copy of the input slice2
     return: T - a 3 by 3 numpy array, indicating the affine transformation matrix that physically registeres slice 1 onto slice 2, in homogeneous coordinates.
     return: P - probabilistic mapping between the locations in slice 1 and the locations in slice 2.
