@@ -4,7 +4,7 @@ import numpy as np
 import time
 from torchdyn.core import NeuralODE
 
-from utils import get_free_gpu
+from .utils import get_free_gpu
 
 
 class VectorField(nn.Module):
@@ -70,29 +70,7 @@ def sample_location_and_conditional_flow(X, Y):
     return t_vector, X_t, U_t
 
 
-def test_flow(model_path, X):
-    gpu_index = get_free_gpu()
-    print(f"Choose GPU:{gpu_index} as device")
-    device = torch.device(f'cuda:{gpu_index}' if torch.cuda.is_available() else 'cpu')
-
-    # model = VectorField(dim=2, hidden_list=[64, 64, 64]).to(device)
-    model = VectorField(dim=2, hidden_list=[256,256,256,256,256,256]).to(device)
-    # model.load_state_dict(torch.load(model_path))
-    checkpoint = torch.load(model_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-
-    X = torch.tensor(X).to(device).to(torch.float32)
-
-    n_ode = NeuralODE(torch_wrapper(model), solver="dopri5", sensitivity="adjoint", atol=1e-4, rtol=1e-4)
-    t_span=torch.linspace(0, 1, 100)
-    with torch.no_grad():
-        traj = n_ode.trajectory(X, t_span)
-    print(traj.shape)
-    print(traj[-1, :].shape)
-    return traj[0, :].detach().cpu().numpy(), traj[-1, :].detach().cpu().numpy()
-
-
-def train_flow_given_P(X, Y, P, max_iter, lr, model_save_name, model_ckpt=None, save_training_state=False, gpu_index=None):
+def train_flow_given_P(X, Y, P, max_iter, lr, model_save_name, hidden_dims=[256,256,256,256,256,256], model_ckpt=None, save_training_state=False, gpu_index=None):
     # Flatten the transport matrix and normalize to get the probability vector
     prob = P.flatten()
     prob /= prob.sum()
@@ -104,8 +82,7 @@ def train_flow_given_P(X, Y, P, max_iter, lr, model_save_name, model_ckpt=None, 
     print(f"Choose GPU:{gpu_index} as device")
     device = torch.device(f'cuda:{gpu_index}' if torch.cuda.is_available() else 'cpu')
 
-    # model = VectorField(dim=2, hidden_list=[64, 64, 64]).to(device)
-    model = VectorField(dim=2, hidden_list=[256,256,256,256,256,256]).to(device)
+    model = VectorField(dim=2, hidden_list=hidden_dims).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # 0.005
     loss_fn = torch.nn.MSELoss()
     
@@ -149,15 +126,53 @@ def train_flow_given_P(X, Y, P, max_iter, lr, model_save_name, model_ckpt=None, 
     return model
 
 
-def morphological_align(slice1, slice2, P, max_iter, model_save_name, lr=0.005, gpu_index=None):
+def flow_morphology(model_path, X, hidden_dims=[256,256,256,256,256,256], training_state=True):
     """
-    Computes the nueral ODE as the morphological alignment between physically aligned slice 1 and slice 2.
+    Applies a trained neural ODE model to input data to obtain the morphologically aliged coordinates.
+
+    Args:
+        model_path (str): Path to the trained model file.
+        X (numpy.ndarray or torch.Tensor): Input spatial coordinates to be non-linearly aligned.
+        hidden_dims (list): List of integers specifying the architecture of the hidden layers of the model. Default is [256, 256, 256, 256, 256, 256].
+        training_state (bool): If True, the saved input model contains its training state (optimizer state). If False, the model only has model weights. Default is True.
+
+    Returns:
+        tuple: A tuple containing two numpy arrays:
+            - The initial state of the trajectory, same as X.
+            - The final state of the trajectory, the X non-linearly aligned according to the model.
+    """
+    gpu_index = get_free_gpu()
+    print(f"Choose GPU:{gpu_index} as device")
+    device = torch.device(f'cuda:{gpu_index}' if torch.cuda.is_available() else 'cpu')
+
+    model = VectorField(dim=2, hidden_list=hidden_dims).to(device)
+    if training_state:
+        checkpoint = torch.load(model_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(torch.load(model_path))
+
+    X = torch.tensor(X).to(device).to(torch.float32)
+
+    n_ode = NeuralODE(torch_wrapper(model), solver="dopri5", sensitivity="adjoint", atol=1e-4, rtol=1e-4)
+    t_span=torch.linspace(0, 1, 100)
+    with torch.no_grad():
+        traj = n_ode.trajectory(X, t_span)
+    print(traj.shape)
+    print(traj[-1, :].shape)
+    return traj[0, :].detach().cpu().numpy(), traj[-1, :].detach().cpu().numpy()
+
+
+def train_morphological_model(slice1, slice2, P, max_iter, model_save_name, hidden_dims=[256,256,256,256,256,256], lr=0.005, gpu_index=None):
+    """
+    Trains the nueral ODE model as the morphological alignment between physically aligned slice 1 and slice 2.
 
     param: slice1 - AnnData object of slice 1, already physically aligned with slice 2
     param: slice2 - AnnData object of slice 2
     param: P - the probabilistic mapping between slice 1 and slice 2, returned by the physical alignment step
     param: max_iter - the number of iterations to train the neural network
     param: model_save_name - the path to a location to save the trained model
+    param: hidden_dims - the architecture of the hidden layers of the model, default [256,256,256,256,256,256], i.e. 6 hidden layers with 256 neurons each
     param: lr - learning rate, default 0.005
     param: gpu_index - the index of the gpu to use for training, if None, then choose the gpu with the lowest memory usage.
 
@@ -166,5 +181,5 @@ def morphological_align(slice1, slice2, P, max_iter, model_save_name, lr=0.005, 
     X = slice1.obsm['spatial']
     Y = slice2.obsm['spatial']
 
-    trained_flow_model = train_flow_given_P(X, Y, P, max_iter=max_iter, lr=lr, model_save_name=model_save_name, save_training_state=True, gpu_index=gpu_index)
+    trained_flow_model = train_flow_given_P(X, Y, P, max_iter=max_iter, lr=lr, model_save_name=model_save_name, hidden_dims=hidden_dims, save_training_state=True, gpu_index=gpu_index)
     return trained_flow_model
